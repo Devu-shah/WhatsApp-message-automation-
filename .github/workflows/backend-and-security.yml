@@ -1,0 +1,54 @@
+name: ReachHub Backend & Security Checks
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  backend-test-and-build:
+    name: Typecheck & Test Cloud Run Backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install backend dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Compile TypeScript
+        run: npm run build
+
+      - name: Run Cloud Run backend security & webhook tests
+        run: node --experimental-strip-types --test tests/*.test.mjs
+
+  secret-hygiene-check:
+    name: Verify Zero Embedded Meta Credentials
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Scan Android & workflow files for accidental Meta token patterns
+        run: |
+          if grep -rnE "EAAG[A-Za-z0-9]{20,}|BEGIN RSA PRIVATE KEY|BEGIN EC PRIVATE KEY" app/ .github/; then
+            echo "Detected potential hardcoded credential!"
+            exit 1
+          fi
+          echo "Secret hygiene check passed."

@@ -1,0 +1,6 @@
+{
+  "name": "ReachHub",
+  "description": "Tablet-first native Android WhatsApp Business campaign manager backed by Google Cloud Run and local Room persistence.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

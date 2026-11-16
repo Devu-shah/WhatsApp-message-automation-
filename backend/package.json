@@ -1,0 +1,28 @@
+{
+  "name": "reachhub-cloudrun-backend",
+  "version": "1.0.0",
+  "description": "Google Cloud Run backend for ReachHub single-operator WhatsApp Business Cloud API campaigns & webhooks",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "node --experimental-strip-types --test tests/backend.test.mjs"
+  },
+  "dependencies": {
+    "@google-cloud/firestore": "^7.11.0",
+    "@google-cloud/secret-manager": "^5.10.0",
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^22.13.0",
+    "typescript": "^5.8.2"
+  }
+}
