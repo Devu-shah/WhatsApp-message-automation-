@@ -41,6 +41,34 @@ function resolvePhoneNumberId(config: BackendConfig, senderProfileRef: string): 
   );
 }
 
+function parsePositiveId(raw: string | undefined): number | null {
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+function detectVerifiedImageMime(buf: Buffer): "image/jpeg" | "image/png" | null {
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    buf.length >= 8 &&
+    buf[0] === 0x89 &&
+    buf[1] === 0x50 &&
+    buf[2] === 0x4e &&
+    buf[3] === 0x47 &&
+    buf[4] === 0x0d &&
+    buf[5] === 0x0a &&
+    buf[6] === 0x1a &&
+    buf[7] === 0x0a
+  ) {
+    return "image/png";
+  }
+  return null;
+}
+
+const E164_REGEX = /^\+[1-9]\d{6,14}$/;
+
 export function createApiRouter(config: BackendConfig, store: BackendStore): express.Router {
   const router = express.Router();
   const rateLimiter = new SlidingWindowRateLimiter(config.rateLimitMaxPerMinute, 60_000);
@@ -176,6 +204,12 @@ export function createApiRouter(config: BackendConfig, store: BackendStore): exp
       return;
     }
 
+    const verifiedMime = detectVerifiedImageMime(file.buffer);
+    if (!verifiedMime) {
+      res.status(400).json({ error: "Uploaded flyer failed JPEG/PNG magic-byte verification" });
+      return;
+    }
+
     const cached = await store.getMediaBySha(sha256Hash, senderProfileRef);
     if (cached) {
       res.json({
@@ -200,7 +234,7 @@ export function createApiRouter(config: BackendConfig, store: BackendStore): exp
         phoneNumberId,
         accessToken: config.secrets.metaAccessToken,
         fileBytes: file.buffer,
-        mimeType: file.mimetype || "image/jpeg",
+        mimeType: verifiedMime,
         filename: String(req.body?.displayName ?? file.originalname ?? "flyer.jpg"),
       });
 
@@ -226,7 +260,11 @@ export function createApiRouter(config: BackendConfig, store: BackendStore): exp
   router.post("/campaigns/:campaignId/dispatch", async (req: RawBodyRequest, res: Response) => {
     if (!(await requireSignedDevice(req, res))) return;
 
-    const campaignId = Number(req.params.campaignId);
+    const campaignId = parsePositiveId(req.params.campaignId);
+    if (campaignId === null) {
+      res.status(400).json({ error: "Invalid campaignId" });
+      return;
+    }
     const body = req.body as {
       senderProfileRef?: string;
       metaTemplateName?: string;
@@ -239,6 +277,11 @@ export function createApiRouter(config: BackendConfig, store: BackendStore): exp
         positionalParameters: string[];
       }>;
     };
+
+    if (!body?.metaTemplateName?.trim()) {
+      res.status(400).json({ error: "metaTemplateName is required" });
+      return;
+    }
 
     const controlState = await store.getCampaignControlState(campaignId);
     if (controlState === "PAUSE" || controlState === "CANCEL") {
@@ -258,6 +301,22 @@ export function createApiRouter(config: BackendConfig, store: BackendStore): exp
     }
 
     const recipients = Array.isArray(body.recipients) ? body.recipients : [];
+    if (recipients.length === 0 || recipients.length > 200) {
+      res.status(400).json({ error: "Batch must contain between 1 and 200 recipients" });
+      return;
+    }
+    for (const r of recipients) {
+      if (
+        !r ||
+        typeof r.idempotencyKey !== "string" ||
+        r.idempotencyKey.trim().length < 8 ||
+        typeof r.recipientPhoneE164 !== "string" ||
+        !E164_REGEX.test(r.recipientPhoneE164.trim())
+      ) {
+        res.status(400).json({ error: "Invalid recipient phone E.164 or idempotencyKey in batch" });
+        return;
+      }
+    }
     const results = [];
     let acceptedCount = 0;
 
@@ -327,7 +386,11 @@ export function createApiRouter(config: BackendConfig, store: BackendStore): exp
   // 5. Campaign Pause / Resume / Cancel synchronization
   router.post("/campaigns/:campaignId/control", async (req: RawBodyRequest, res: Response) => {
     if (!(await requireSignedDevice(req, res))) return;
-    const campaignId = Number(req.params.campaignId);
+    const campaignId = parsePositiveId(req.params.campaignId);
+    if (campaignId === null) {
+      res.status(400).json({ error: "Invalid campaignId" });
+      return;
+    }
     const action = String(req.body?.action ?? "").toUpperCase() as CampaignControlAction;
     if (!["PAUSE", "RESUME", "CANCEL"].includes(action)) {
       res.status(400).json({ error: "Action must be PAUSE, RESUME, or CANCEL" });
@@ -340,8 +403,13 @@ export function createApiRouter(config: BackendConfig, store: BackendStore): exp
   // 6. Webhook Event Status Sync Polling for Android Tablet
   router.get("/campaigns/:campaignId/status", async (req: RawBodyRequest, res: Response) => {
     if (!(await requireSignedDevice(req, res))) return;
-    const campaignId = Number(req.params.campaignId);
-    const sinceMs = Number(req.query.since ?? "0") || 0;
+    const campaignId = parsePositiveId(req.params.campaignId);
+    if (campaignId === null) {
+      res.status(400).json({ error: "Invalid campaignId" });
+      return;
+    }
+    const rawSince = Number(req.query.since ?? "0");
+    const sinceMs = Number.isFinite(rawSince) && rawSince >= 0 ? rawSince : 0;
     const events = await store.getCampaignEvents(campaignId, sinceMs);
     const nextCursorMs =
       events.length > 0 ? events[events.length - 1]!.eventTimestampMs : sinceMs;

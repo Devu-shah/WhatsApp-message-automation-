@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   backend-test-and-build:
-    name: Typecheck & Test Cloud Run Backend
+    name: Typecheck, Test & Audit Cloud Run Backend
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -24,31 +24,42 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Node 22
+      - name: Set up Node 22 with npm cache
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
 
-      - name: Install backend dependencies
-        run: npm install --no-audit --no-fund
+      - name: Install backend dependencies reproducibly
+        run: npm ci --no-audit --no-fund
 
       - name: Compile TypeScript
         run: npm run build
 
       - name: Run Cloud Run backend security & webhook tests
-        run: node --experimental-strip-types --test tests/*.test.mjs
+        run: npm test
 
-  secret-hygiene-check:
-    name: Verify Zero Embedded Meta Credentials
+      - name: Run npm production dependency vulnerability audit
+        run: npm audit --omit=dev --audit-level=high
+
+  secret-hygiene-and-manifest-check:
+    name: Secret Hygiene & Android Security Manifest Check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Scan Android & workflow files for accidental Meta token patterns
+      - name: Scan Android, backend, and workflow files for embedded credentials
         run: |
-          if grep -rnE "EAAG[A-Za-z0-9]{20,}|BEGIN RSA PRIVATE KEY|BEGIN EC PRIVATE KEY" app/ .github/; then
-            echo "Detected potential hardcoded credential!"
+          if grep -rnE "EAAG[A-Za-z0-9]{20,}|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|AIza[0-9A-Za-z_-]{35}" app/ backend/src/ .github/; then
+            echo "ERROR: Detected potential hardcoded credential or private key!" >&2
             exit 1
           fi
           echo "Secret hygiene check passed."
+
+      - name: Verify Android manifest transport and backup hardening
+        run: |
+          grep -q 'android:allowBackup="false"' app/src/main/AndroidManifest.xml
+          grep -q 'android:usesCleartextTraffic="false"' app/src/main/AndroidManifest.xml
+          echo "Android manifest hardening check passed."

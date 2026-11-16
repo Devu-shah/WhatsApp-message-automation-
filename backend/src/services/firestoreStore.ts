@@ -152,10 +152,11 @@ export class FirestoreBackendStore implements BackendStore {
   ): Promise<CampaignStatusEventRecord[]> {
     const snap = await this.col("status_events")
       .where("campaignId", "==", campaignId)
-      .where("eventTimestampMs", ">", sinceTimestampMs)
-      .orderBy("eventTimestampMs", "asc")
       .get();
 
-    return snap.docs.map((doc) => doc.data() as CampaignStatusEventRecord);
+    return snap.docs
+      .map((doc) => doc.data() as CampaignStatusEventRecord)
+      .filter((event) => event.eventTimestampMs > sinceTimestampMs)
+      .sort((a, b) => a.eventTimestampMs - b.eventTimestampMs);
   }
 }

@@ -15,30 +15,41 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
-      # Install supported SDK packages explicitly.
-      # The legacy standalone "tools" package is no longer available from sdkmanager.
+      # Use newline-separated documented syntax and the project's actual compileSdk (36.1).
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platform-tools,platforms;android-36,build-tools;36.0.0'
+          packages: |
+            platform-tools
+            platforms;android-36.1
+            build-tools;36.0.0
 
       - name: Set up Gradle 9.3.1 with caching
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.3.1'
 
-      - name: Decode upload keystore from GitHub Secret
+      - name: Prepare debug keystore and validate release signing secrets
         env:
           SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
-          if [ -z "$SIGNING_KEYSTORE_BASE64" ]; then
-            echo "Missing SIGNING_KEYSTORE_BASE64 secret" >&2
+          if [ ! -f debug.keystore ]; then
+            if [ ! -f debug.keystore.base64 ]; then
+              echo "ERROR: Missing debug.keystore.base64 required for debugConfig signing" >&2
+              exit 1
+            fi
+            base64 -d debug.keystore.base64 > debug.keystore
+          fi
+          if [ -z "$SIGNING_KEYSTORE_BASE64" ] || [ -z "$SIGNING_STORE_PASSWORD" ] || [ -z "$SIGNING_KEY_PASSWORD" ]; then
+            echo "ERROR: Missing one or more release signing secrets (SIGNING_KEYSTORE_BASE64, SIGNING_STORE_PASSWORD, SIGNING_KEY_PASSWORD)" >&2
             exit 1
           fi
           echo "$SIGNING_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release-upload.jks"
@@ -47,9 +58,9 @@ jobs:
         run: |
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
-            ./gradlew testDebugUnitTest --no-daemon
+            ./gradlew testDebugUnitTest --no-daemon --stacktrace
           else
-            gradle testDebugUnitTest --no-daemon
+            gradle testDebugUnitTest --no-daemon --stacktrace
           fi
 
       - name: Build Signed Release APK
@@ -59,18 +70,23 @@ jobs:
           KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           if [ -f "./gradlew" ]; then
-            ./gradlew assembleRelease --no-daemon
+            ./gradlew assembleRelease --no-daemon --stacktrace
           else
-            gradle assembleRelease --no-daemon
+            gradle assembleRelease --no-daemon --stacktrace
+          fi
+          if [ ! -f app/build/outputs/apk/release/app-release.apk ]; then
+            echo "ERROR: Expected APK app/build/outputs/apk/release/app-release.apk was not generated" >&2
+            exit 1
           fi
 
-      - name: Clean up temporary keystore
+      - name: Clean up temporary keystores
         if: always()
-        run: rm -f "$RUNNER_TEMP/release-upload.jks"
+        run: rm -f "$RUNNER_TEMP/release-upload.jks" debug.keystore
 
       - name: Upload Signed Release APK
         uses: actions/upload-artifact@v4
         with:
           name: reachhub-release-apk
           path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
           retention-days: 14
