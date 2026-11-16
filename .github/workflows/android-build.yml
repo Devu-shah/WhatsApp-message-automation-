@@ -89,7 +89,7 @@ jobs:
             echo "ERROR: Expected APK $APK_PATH was not generated" >&2
             exit 1
           fi
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK_PATH"
+          "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools/36.0.0/apksigner" verify --verbose "$APK_PATH"
           ls -lh "$APK_PATH"
 
       - name: Clean up temporary debug keystore
