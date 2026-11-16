@@ -23,7 +23,7 @@ jobs:
 
       # Configure Android SDK environment without passing concatenated package strings to setup-android.
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
           packages: ''
 
